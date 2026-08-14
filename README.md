@@ -2,6 +2,8 @@
 
 An evidence-first Codex skill and bundled Windows toolchain for static binary analysis, HTTP(S) traffic inspection, and browser-driven dynamic analysis.
 
+This project's original material is open source under the [MIT License](LICENSE). Bundled third-party runtimes and assets retain their own licenses and terms; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
+
 The project gives an AI agent a reproducible operating model for choosing the right reverse-engineering tool, preserving evidence, separating verified facts from hypotheses, and producing analysis artifacts that another operator can inspect and repeat.
 
 > Use this workbench only on software, systems, and traffic you own or are explicitly authorized to test.
@@ -207,11 +209,11 @@ When replacing a bundled runtime:
 5. Run a minimal help or summary command.
 6. Update the relevant guide and this README when paths or behavior change.
 
-## Third-Party Components And Licensing
+## License And Third-Party Components
 
-This repository bundles third-party software, binaries, fonts, and supporting data. Component licenses and notices are stored within their respective runtime directories where provided. The repository currently does **not** declare a single project-wide license.
+Original project material is released under the OSI-approved [MIT License](LICENSE). The repository also bundles third-party software, binaries, fonts, and supporting data that remain subject to their own licenses and terms.
 
-Before redistributing, mirroring, or using the bundled assets outside their original tool context, review the applicable upstream licenses and confirm that you have the necessary rights, especially for bundled fonts and binary distributions.
+Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the license files within each runtime directory before redistributing, mirroring, or using bundled assets outside their original tool context. Pay particular attention to fonts and binary distributions, which may carry terms beyond the project's MIT License.
 
 ## Disclaimer
 
