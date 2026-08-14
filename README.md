@@ -2,7 +2,7 @@
 
 An evidence-first Codex skill for coordinating static binary analysis, HTTP(S) traffic capture, and browser-driven dynamic analysis.
 
-The repository contains the skill definition and operating guides. Third-party runtimes, browser profiles, captures, logs, and generated analysis artifacts are intentionally excluded from Git because they are large, machine-specific, or potentially sensitive.
+The repository contains the skill definition, operating guides, and bundled Windows tool runtimes. Browser profiles, runtime caches, captures, logs, and generated analysis artifacts are intentionally excluded because they are machine-specific or potentially sensitive. Large runtime files are stored with Git LFS.
 
 ## Included
 
@@ -12,9 +12,9 @@ The repository contains the skill definition and operating guides. Third-party r
 - `guides/Camoufox_AI_Usage_Rules.md`: Camoufox and CamoFox MCP usage rules.
 - `guides/thinking/General_Reverse_Engineering_Thinking_Flow.md`: general analysis methodology.
 
-## Local Runtime Layout
+## Bundled Runtime Layout
 
-Install or place the required third-party runtimes under `tool/`:
+The required third-party runtimes are stored under `tool/`:
 
 ```text
 tool/
@@ -24,6 +24,13 @@ tool/
 ```
 
 Generated evidence belongs under `work/`. See `SKILL.md` and the relevant guide before operating a tool.
+
+Clone with Git LFS installed so large runtime files are downloaded correctly:
+
+```powershell
+git lfs install
+git clone https://github.com/cuccuc377-dev/Reverse-skills.git
+```
 
 ## Usage
 
