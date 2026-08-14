@@ -1,5 +1,13 @@
-# Bundled third-party runtimes and local browser profiles are not versioned.
-/tool/
+# Runtime-generated state inside bundled tools.
+tool/camoufox_browser/Profiles/
+tool/**/__pycache__/
+tool/**/.gradle/
+tool/**/work/
+tool/**/logs/
+tool/**/cache2/
+tool/**/startupCache/
+tool/**/storage/
+tool/**/downloads/
 
 # Reverse-engineering evidence and generated task output.
 /work/
