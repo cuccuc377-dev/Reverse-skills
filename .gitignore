@@ -1,0 +1,21 @@
+# Bundled third-party runtimes and local browser profiles are not versioned.
+/tool/
+
+# Reverse-engineering evidence and generated task output.
+/work/
+
+# Local captures, logs, and temporary files.
+*.har
+*.jsonl
+*.mitm
+*.log
+*.tmp
+*.temp
+
+# Common local environment and editor state.
+.env
+.env.*
+!.env.example
+.idea/
+.DS_Store
+Thumbs.db
