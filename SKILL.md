@@ -3,9 +3,11 @@ name: reverse-engineering-ai-workbench
 description: >
   Use this skill when an AI agent needs to operate this project's reverse-engineering and traffic-analysis toolchain:
   Ghidra AI CLI for static binary analysis, mitmproxy AI CLI for proxy capture and flow control, Camoufox/CamoFox MCP
-  for browser automation and dynamic web analysis, or coordinated workflows across these tools. Trigger for tasks
+  for browser automation and dynamic web analysis, Android SDK Platform-Tools/ADB for authorized Android device and
+  application dynamic analysis, or coordinated workflows across these tools. Trigger for tasks
   involving binary import, decompilation, disassembly, strings/imports/xrefs, packet capture, JSONL flow analysis,
   daemon flow replay/editing, browser profile isolation, MCP setup, web interaction, request evidence collection,
+  Android package/process inspection, logcat, dumpsys, APK collection, screenshots, port forwarding, JDWP debugging,
   and end-to-end reverse-analysis reports.
 ---
 
@@ -15,7 +17,7 @@ description: >
 
 The first response for any task using this project MUST perform these actions before making changes or drawing conclusions:
 
-1. **Identify the task lane**: classify the request as one or more of `static-binary`, `traffic-capture`, `browser-automation`, `web-dynamic-analysis`, `tool-maintenance`, or `documentation`.
+1. **Identify the task lane**: classify the request as one or more of `static-binary`, `traffic-capture`, `browser-automation`, `web-dynamic-analysis`, `android-dynamic-analysis`, `tool-maintenance`, or `documentation`.
 2. **Check the required tool entry**: verify the relevant runtime path exists before use.
 3. **Create or choose a task workspace**: use `work\<tool>\<task_id>` for temporary evidence and outputs.
 4. **State the initial evidence plan**: list the commands or files that will establish the first reliable facts.
@@ -31,10 +33,12 @@ This project skill uses these core components:
 - `guides\Ghidra_AI_CLI_Usage_Rules.md`: detailed rules for Ghidra AI CLI static binary analysis.
 - `guides\mitmproxy_AI_CLI_Usage_Rules.md`: detailed rules for mitmproxy AI CLI capture, daemon control, JSONL, and `.mitm` workflows.
 - `guides\Camoufox_AI_Usage_Rules.md`: detailed rules for Camoufox, CamoFox MCP, browser profiles, and browser-driven analysis.
+- `guides\Android_ADB_Usage_Rules.md`: detailed rules for ADB device selection, Android application evidence collection, runtime inspection, debugging, and cleanup.
 - `tool\ghidra_12.2_DEV`: compiled Ghidra AI CLI runtime.
 - `tool\ghidra-master`: source or maintenance tree if present; never use it as the default runtime entry.
 - `tool\mitmproxy-ai-cli-windows-x86_64`: compiled mitmproxy AI CLI runtime.
 - `tool\camoufox_browser`: Camoufox browser runtime and bundled `camofox-mcp` source.
+- `tool\platform-tools`: Android SDK Platform-Tools runtime containing `adb.exe`, `fastboot.exe`, and supporting files.
 - `work\`: recommended location for generated projects, captures, exports, logs, screenshots, and notes.
 
 Read the relevant detailed rules file before operating that tool. Do not load all references by default if the task only involves one lane.
@@ -49,11 +53,11 @@ Goal: prevent guesswork, GUI-only workflows, untracked state, and non-reproducib
 
 Collect only what the task requires:
 
-- Target file path, URL, application, or capture objective.
+- Target file path, URL, Android package/activity, application, or capture objective.
 - Desired output: report, patch, capture, replay, static analysis, tool setup, or documentation.
-- Runtime constraints: headless/headed browser, ports, profile reuse, timeout, or offline-only analysis.
+- Runtime constraints: headless/headed browser, Android device serial, ports, profile reuse, timeout, or offline-only analysis.
 - Existing artifacts: `.exe`, `.dll`, `.mitm`, HAR, JSONL, screenshots, logs, profiles, or previous notes.
-- Required tool lane: Ghidra, mitmproxy, Camoufox, CamoFox MCP, or a coordinated workflow.
+- Required tool lane: Ghidra, mitmproxy, Camoufox, CamoFox MCP, ADB, or a coordinated workflow.
 
 If essential input is missing but discoverable locally, inspect the workspace instead of asking immediately.
 
@@ -67,7 +71,7 @@ The assistant MUST produce task-appropriate outputs:
 4. **Cleanup statement**: note which temporary processes or directories were stopped, removed, or intentionally retained.
 5. **Next step**: include only if it directly follows from the evidence.
 
-For analysis tasks, include IDs or anchors such as flow IDs, addresses, function names, URLs, hashes, or screenshot paths.
+For analysis tasks, include IDs or anchors such as device serials, package/process names, PIDs, flow IDs, addresses, function names, URLs, hashes, or screenshot paths.
 
 ## Tool Selection Protocol
 
@@ -83,6 +87,8 @@ Select the narrowest tool that can answer the task.
 | Browser runtime, isolated profile, headed/headless visual checks | Camoufox |
 | JS hooks, initiator stacks, JSVMP instrumentation, environment tracing | Camoufox Reverse MCP, when available |
 | Browser-triggered API capture | Camoufox or CamoFox MCP plus mitmproxy AI CLI |
+| Android device/app inventory, logcat, dumpsys, screenshots, APK collection, JDWP/port forwarding | ADB |
+| Android app traffic capture | ADB plus mitmproxy AI CLI |
 
 ## Key Constraints
 
@@ -93,6 +99,7 @@ Never present an unsupported claim as a conclusion.
 - Static claims need addresses, strings, imports, functions, xrefs, or decompiler output.
 - Traffic claims need flow IDs, URLs, methods, status codes, headers, body hashes, JSONL records, or `.mitm` evidence.
 - Browser claims need URL, screenshot, snapshot, DOM output, state export, or tool response.
+- Android claims need a device serial plus package, PID, component, log line, dumpsys output, file hash, screenshot, or reproducible ADB command evidence.
 - Tool setup claims need command output or config path evidence.
 
 ### Runtime Gate
@@ -105,6 +112,7 @@ All relative paths are resolved from the project root, the directory that contai
 Test-Path tool\ghidra_12.2_DEV\ai_cli\ghidra_ai_cli.py
 Test-Path tool\mitmproxy-ai-cli-windows-x86_64\mitmai.exe
 Test-Path tool\camoufox_browser\camoufox\Cache\camoufox.exe
+Test-Path tool\platform-tools\adb.exe
 ```
 
 For CamoFox MCP, verify build output before writing client config:
@@ -121,6 +129,7 @@ Use task-local output directories:
 work\ghidra_projects
 work\mitmproxy\<task_id>
 work\camoufox\<task_id>
+work\adb\<task_id>
 ```
 
 Before recursive deletion, verify the resolved path is under the intended `work` subtree. Never delete `tool\...` runtime directories during cleanup.
@@ -136,6 +145,10 @@ Use isolated browser profiles and task-specific capture directories. Do not poll
 ### Process Ownership
 
 Do not kill broad process classes blindly. Identify process path, port, or saved process ID before stopping a process.
+
+### Android Device Safety
+
+Operate only on devices and applications the user owns or is authorized to test. Run `adb devices -l` first and use `-s <serial>` on every device-specific command when more than one device or emulator is visible. Do not assume root access. Do not unlock bootloaders, flash partitions, wipe data, uninstall packages, clear app data, reboot into special modes, or change persistent device settings unless the user explicitly requests that action and understands the impact. Record and restore temporary proxy, forwarding, reverse, and debug-app state.
 
 ## Static Binary Workflow
 
@@ -181,6 +194,32 @@ Read `guides\Camoufox_AI_Usage_Rules.md` before using Camoufox or CamoFox MCP.
 7. Use Reverse MCP only for hooks, initiator stacks, JSVMP instrumentation, or environment tracing.
 8. Save screenshots, page state, relevant requests, and notes.
 9. Close tabs or browser sessions and clean task state.
+
+## Android ADB Workflow
+
+Read `guides\Android_ADB_Usage_Rules.md` before using ADB for device or application analysis.
+
+1. Verify `tool\platform-tools\adb.exe` and record `source.properties` or `adb version` when the environment permits it.
+2. Create `work\adb\<task_id>\logs`, `screenshots`, `packages`, and `reports` as needed.
+3. Run `adb devices -l`; require an authorized `device` state and select a single serial explicitly.
+4. Record a minimal device baseline: Android release/API, ABI, model, build fingerprint, and root/debuggable constraints relevant to the task.
+5. Resolve the target package and launcher component before starting, stopping, inspecting, or debugging it.
+6. Clear or timestamp logcat immediately before reproducing the behavior, then save focused logs to the task workspace.
+7. Use `pidof`, `ps`, `dumpsys package`, `dumpsys activity`, and `dumpsys meminfo` to tie runtime facts to the target package and PID.
+8. Pull only authorized artifacts. Record remote paths and SHA-256 hashes for APKs or files used in later static analysis.
+9. Use `run-as` and JDWP only when the application is debuggable and authorization permits it; do not present access failures as evidence that data is absent.
+10. Remove task-owned forwards/reverses, clear temporary debug-app state, restore proxy settings, and retain evidence under `work\adb\<task_id>`.
+
+## Coordinated Android Reverse Workflow
+
+For an authorized Android application investigation:
+
+1. Use ADB to identify the package, launcher activity, installed APK paths, PID, ABI, and reproducible interaction state.
+2. Pull APK splits into `work\adb\<task_id>\packages` and hash them before Ghidra or other static analysis.
+3. If network behavior matters, start mitmproxy capture, record the existing device proxy, set the task proxy, and reproduce the behavior.
+4. Preserve logcat, dumpsys output, screenshots, JSONL, and `.mitm` evidence with timestamps that allow correlation.
+5. Restore the original proxy and remove task-owned ADB forwards/reverses when collection ends.
+6. Correlate runtime evidence with static functions, strings, endpoints, libraries, or call sites; keep inference distinct from confirmed linkage.
 
 ## Coordinated Web Reverse Workflow
 
@@ -229,6 +268,14 @@ Camoufox direct launch:
 
 ```powershell
 tool\camoufox_browser\camoufox\Cache\camoufox.exe --new-instance --profile work\camoufox\case001\profile https://example.com
+```
+
+ADB device check:
+
+```powershell
+$adb = "tool\platform-tools\adb.exe"
+& $adb devices -l
+& $adb -s <serial> shell getprop ro.build.fingerprint
 ```
 
 CamoFox MCP build:

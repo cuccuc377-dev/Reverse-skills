@@ -1,6 +1,6 @@
 # Reverse Engineering AI Workbench
 
-An evidence-first Codex skill and bundled Windows toolchain for static binary analysis, HTTP(S) traffic inspection, and browser-driven dynamic analysis.
+An evidence-first Codex skill and bundled Windows toolchain for static binary analysis, HTTP(S) traffic inspection, browser-driven dynamic analysis, and authorized Android application analysis through ADB.
 
 This project's original material is open source under the [MIT License](LICENSE). Bundled third-party runtimes and assets retain their own licenses and terms; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
@@ -16,6 +16,7 @@ The project gives an AI agent a reproducible operating model for choosing the ri
 | Traffic capture | mitmproxy AI CLI | Live HTTP(S) capture, flow filtering, JSONL export, replay, editing, and offline `.mitm` review |
 | Browser automation | Camoufox and CamoFox MCP | Isolated browser sessions, navigation, interaction, screenshots, downloads, and profile workflows |
 | Web dynamic analysis | Camoufox plus mitmproxy | Browser-triggered API discovery, request evidence, and coordinated runtime analysis |
+| Android dynamic analysis | Android SDK Platform-Tools/ADB | Device and package inventory, logcat, dumpsys, screenshots, APK collection, port forwarding, and JDWP debugging |
 
 The repository includes both the instructions an AI agent should follow and the Windows runtimes those instructions reference. Large runtime files are stored with Git LFS.
 
@@ -37,21 +38,25 @@ Reverse-skills/
 |   |-- Ghidra_AI_CLI_Usage_Rules.md
 |   |-- mitmproxy_AI_CLI_Usage_Rules.md
 |   |-- Camoufox_AI_Usage_Rules.md
+|   |-- Android_ADB_Usage_Rules.md
 |   `-- thinking/
 |       `-- General_Reverse_Engineering_Thinking_Flow.md
 |-- tool/
 |   |-- ghidra_12.2_DEV/
 |   |-- mitmproxy-ai-cli-windows-x86_64/
-|   `-- camoufox_browser/
+|   |-- camoufox_browser/
+|   `-- platform-tools/
 `-- work/                         # Generated locally and ignored by Git
 ```
 
 Key files:
 
+- [`CHANGELOG.md`](CHANGELOG.md) records notable workbench and bundled-tool updates.
 - [`SKILL.md`](SKILL.md) defines the mandatory bootstrap protocol, tool-selection rules, workflows, and output contract.
 - [`guides/Ghidra_AI_CLI_Usage_Rules.md`](guides/Ghidra_AI_CLI_Usage_Rules.md) covers static analysis with Ghidra AI CLI.
 - [`guides/mitmproxy_AI_CLI_Usage_Rules.md`](guides/mitmproxy_AI_CLI_Usage_Rules.md) covers capture, daemon control, JSONL, replay, and offline inspection.
 - [`guides/Camoufox_AI_Usage_Rules.md`](guides/Camoufox_AI_Usage_Rules.md) covers Camoufox, CamoFox MCP, isolated profiles, and browser evidence.
+- [`guides/Android_ADB_Usage_Rules.md`](guides/Android_ADB_Usage_Rules.md) covers ADB device selection, Android package/process inspection, evidence capture, debugging, and cleanup.
 - [`guides/thinking/General_Reverse_Engineering_Thinking_Flow.md`](guides/thinking/General_Reverse_Engineering_Thinking_Flow.md) provides the general reasoning methodology.
 
 ## Requirements
@@ -62,6 +67,7 @@ Key files:
 - Python and a compatible Java runtime when required by the bundled Ghidra tooling.
 - Node.js and npm when rebuilding or modifying CamoFox MCP.
 - Administrator privileges only for operations that genuinely require them, such as installing a local interception certificate.
+- An authorized Android device or emulator with USB or wireless debugging enabled for ADB workflows.
 
 ## Installation
 
@@ -81,9 +87,10 @@ Test-Path tool\ghidra_12.2_DEV\ai_cli\ghidra_ai_cli.py
 Test-Path tool\mitmproxy-ai-cli-windows-x86_64\mitmai.exe
 Test-Path tool\camoufox_browser\camoufox\Cache\camoufox.exe
 Test-Path tool\camoufox_browser\camofox-mcp\dist\index.js
+Test-Path tool\platform-tools\adb.exe
 ```
 
-The first three checks should resolve to `True` for the bundled runtimes. If the CamoFox MCP build output is absent, build it locally:
+The Ghidra, mitmproxy, Camoufox, and ADB runtime checks should resolve to `True`. If the CamoFox MCP build output is absent, build it locally:
 
 ```powershell
 Push-Location tool\camoufox_browser\camofox-mcp
@@ -98,7 +105,7 @@ Install or link this repository as a Codex skill, or open the repository as a Co
 
 Every task starts with the bootstrap protocol:
 
-1. Classify the lane: `static-binary`, `traffic-capture`, `browser-automation`, `web-dynamic-analysis`, `tool-maintenance`, or `documentation`.
+1. Classify the lane: `static-binary`, `traffic-capture`, `browser-automation`, `web-dynamic-analysis`, `android-dynamic-analysis`, `tool-maintenance`, or `documentation`.
 2. Verify the required runtime entry point.
 3. Choose a short task ID and create a task-local workspace under `work/`.
 4. State which commands and artifacts will establish the initial facts.
@@ -151,6 +158,24 @@ tool\camoufox_browser\camoufox\Cache\camoufox.exe `
 
 Use CamoFox MCP for normal navigation, snapshots, clicks, typing, downloads, and profile operations. Preserve relevant screenshots, page state, URLs, and request evidence in the task directory.
 
+### Android Device And Application Analysis
+
+Read the ADB guide first. Confirm the device is authorized, select its serial explicitly, and save evidence outside the runtime directory:
+
+```powershell
+$taskId = "android-app-001"
+$adb = "tool\platform-tools\adb.exe"
+New-Item -ItemType Directory -Force "work\adb\$taskId\logs", "work\adb\$taskId\screenshots", "work\adb\$taskId\reports" | Out-Null
+
+& $adb devices -l
+& $adb -s <serial> shell getprop ro.build.fingerprint |
+  Set-Content "work\adb\$taskId\reports\build-fingerprint.txt"
+& $adb -s <serial> shell dumpsys package <package> |
+  Set-Content "work\adb\$taskId\reports\package.txt"
+```
+
+Use `-s <serial>` consistently. Preserve logcat, dumpsys reports, screenshots, APK hashes, and the commands that produced them. Restore any proxy, forwarding, reverse, or debug-app state changed during analysis.
+
 ## Coordinated Web Analysis
 
 A browser-triggered API investigation typically follows this sequence:
@@ -182,6 +207,7 @@ The repository intentionally ignores runtime-generated and potentially sensitive
 - Ghidra Python and Gradle caches.
 - `work/` projects, captures, logs, screenshots, and exported bodies.
 - `.mitm`, HAR, JSONL, log, environment, and temporary files.
+- Android logs, screenshots, pulled APKs, bugreports, and device-specific analysis artifacts stored under `work/`.
 
 Review `git status` before every commit. Never commit live browser profiles, credentials, private certificates, captured authentication material, proprietary samples, or analysis evidence that you are not authorized to publish.
 

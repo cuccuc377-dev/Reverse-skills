@@ -48,9 +48,19 @@ OSI-approved software license. Users and redistributors are responsible for
 verifying that their intended use and distribution comply with the applicable
 terms.
 
+## Android SDK Platform-Tools
+
+The bundled Android SDK Platform-Tools distribution, including ADB and
+Fastboot, is provided by Google and includes software under the Apache License
+2.0 and other applicable notices. See:
+
+- `tool/platform-tools/NOTICE.txt`
+- `tool/platform-tools/source.properties`
+
+Android and related names are trademarks of Google LLC.
+
 ## No Endorsement
 
 Third-party names and trademarks belong to their respective owners. Their
 inclusion identifies compatible or bundled components and does not imply
 endorsement of this project.
-

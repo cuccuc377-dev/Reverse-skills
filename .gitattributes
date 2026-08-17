@@ -15,3 +15,4 @@ tool/camoufox_browser/camoufox/Cache/fonts/Hiragino[[:space:]]Sans[[:space:]]GB.
 tool/camoufox_browser/camoufox/Cache/fonts/Arial[[:space:]]Unicode.ttf filter=lfs diff=lfs merge=lfs -text
 tool/ghidra_12.2_DEV/Ghidra/Features/Base/lib/Base.jar filter=lfs diff=lfs merge=lfs -text
 tool/ghidra_12.2_DEV/Ghidra/Features/FunctionID/data/vs2015_x86.fidbf filter=lfs diff=lfs merge=lfs -text
+tool/platform-tools/NOTICE.txt -text -diff
