@@ -41,7 +41,8 @@ Reverse-skills/
 |   |-- Android_ADB_Usage_Rules.md
 |   `-- thinking/
 |       |-- General_Reverse_Engineering_Thinking_Flow.md
-|       `-- Windows_Driver_DLL_Offline_Validation_Thinking_Flow.md
+|       |-- Windows_Driver_DLL_Offline_Validation_Thinking_Flow.md
+|       `-- Android_Cloud_Lua_Delivery_Recovery_Thinking_Flow.md
 |-- tool/
 |   |-- ghidra_12.2_DEV/
 |   |-- mitmproxy-ai-cli-windows-x86_64/
@@ -60,6 +61,7 @@ Key files:
 - [`guides/Android_ADB_Usage_Rules.md`](guides/Android_ADB_Usage_Rules.md) covers ADB device selection, Android package/process inspection, evidence capture, debugging, and cleanup.
 - [`guides/thinking/General_Reverse_Engineering_Thinking_Flow.md`](guides/thinking/General_Reverse_Engineering_Thinking_Flow.md) provides the general reasoning methodology.
 - [`guides/thinking/Windows_Driver_DLL_Offline_Validation_Thinking_Flow.md`](guides/thinking/Windows_Driver_DLL_Offline_Validation_Thinking_Flow.md) provides an evidence-first workflow for authorized Windows driver, DLL, device-communication, and offline-validation analysis.
+- [`guides/thinking/Android_Cloud_Lua_Delivery_Recovery_Thinking_Flow.md`](guides/thinking/Android_Cloud_Lua_Delivery_Recovery_Thinking_Flow.md) documents an authorized Android cloud-script workflow in Chinese: delivery tracing, byte-preserving capture, layered Lua recovery, readability transformations, runtime diagnosis, and publication checks.
 
 ## Requirements
 
