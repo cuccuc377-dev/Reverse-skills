@@ -1,115 +1,114 @@
-# Android 云端 Lua 下发、解密与运行验证流程
-Android Cloud Lua Delivery and Recovery Thinking Flow
+# Android Cloud Lua Delivery and Recovery Thinking Flow
 
-本文把一次 Android APK 云端 Lua 分析整理为可复现的技术流程：每一步说明输入、操作、判断条件、证据和失败后的下一步。适用于经授权的脚本恢复、客户端迁移与兼容性排查。
+This guide turns an Android APK cloud Lua analysis into a reproducible technical workflow. Each stage identifies its inputs, operations, decision criteria, evidence, and next steps after a failure. It applies to authorized script recovery, client migration, and compatibility troubleshooting.
 
-重点是区分“服务器下发了什么”“客户端下载后做了什么”“什么时候验证卡密”“脚本为什么没有运行”。不能从文件名、某个函数名称或一次成功响应直接推导整个系统的行为。
+The central questions are what the server delivers, what the client does with it, when license-key validation occurs, and why a script may fail to run. A filename, function name, or single successful response cannot establish the behavior of the entire system.
 
-这是操作流程与案例复盘，不是完整原工程或通用解密器。公开内容不包含真实服务地址、请求密钥、解密密钥、卡密、令牌、签名私钥、业务源码和原始流量。示例中的占位参数必须从自己有权分析的样本中确认。
+This is a workflow and case review, not the complete original project or a universal decryptor. Public content excludes live service addresses, request secrets, decryption keys, license keys, tokens, signing private keys, application source code, and raw traffic. Resolve example placeholders from a sample you are authorized to analyze.
 
-相关规范：[通用逆向流程](General_Reverse_Engineering_Thinking_Flow.md)、[Android ADB](../Android_ADB_Usage_Rules.md)、[Ghidra](../Ghidra_AI_CLI_Usage_Rules.md)、[流量分析](../mitmproxy_AI_CLI_Usage_Rules.md)。
+Related guidance: [General reverse-engineering workflow](General_Reverse_Engineering_Thinking_Flow.md), [Android ADB](../Android_ADB_Usage_Rules.md), [Ghidra](../Ghidra_AI_CLI_Usage_Rules.md), and [traffic analysis](../mitmproxy_AI_CLI_Usage_Rules.md).
 
 ---
 
-## 1. 先确定交付目标和分析边界
+## 1. Define deliverables and analysis boundaries
 
-将目标拆开，分别验收：
+Separate the objectives and validate each independently:
 
-| 目标 | 最小交付 | 不能据此声称 |
+| Objective | Minimum deliverable | What it does not establish |
 |---|---|---|
-| 确认云端逻辑 | 请求到消费者的调用路径 | 服务器一定下发可执行源码 |
-| 保存载荷 | 原始响应、提取字节、哈希、请求记录 | 已经得到 Lua |
-| 恢复源码 | 模块边界、解码器、逆向重编码校验 | 已去除所有源码混淆 |
-| 整理可读 Lua | 变换记录、原始版、可读版、语法检查 | 已恢复开发者命名和完整工程 |
-| 修改本地执行流程 | 独立构建和测试记录 | 业务不再依赖服务器或插件 |
-| 验证可运行 | 具体设备、配置、已安装包哈希、阶段证据 | 所有架构和全部功能都正常 |
+| Identify cloud behavior | Call path from the request to its consumer | The server necessarily delivers executable source |
+| Preserve the payload | Original response, extracted bytes, hashes, and request record | Lua has already been recovered |
+| Recover source | Module boundaries, decoder, and inverse encoding checks | All source obfuscation has been removed |
+| Produce readable Lua | Transformation records, original and readable copies, and syntax checks | Original developer names and the complete project have been restored |
+| Change local execution | Separate builds and test records | Application behavior no longer depends on servers or plugins |
+| Verify execution | Specific device, configuration, installed APK hash, and stage evidence | Every architecture and feature works |
 
-记录样本来源、SHA-256、包名、版本、目标设备、允许的网络请求范围及已有测试状态。抓取客户端可见脚本不等于获得访问其他账户、枚举脚本 ID 或发布第三方源码的许可。
+Record sample provenance, SHA-256, package name, version, target device, authorized network request scope, and existing test status. Capturing scripts visible to a client does not grant permission to access other accounts, enumerate script IDs, or publish third-party source code.
 
-建议目录：
+Suggested layout:
 
 ```text
 work/cloud-lua/<case-id>/
   inventory.json
-  raw/                  原始 APK、原始响应、原始容器
-  extracted/            DEX、ELF、入口资源
-  requests/             请求与响应记录；私有保存
-  lua_decrypted/        原始解密字节
-  lua_readable/         分析用可读副本
-  scripts/              获取、解码、变换、验证
-  builds/<build-id>/     每次构建独立目录
-  logs/                 安装与运行日志
-  reports/              结论和验证矩阵
-  public/               单独审查的公开文档
+  raw/                  Original APK, responses, and containers
+  extracted/            DEX, ELF, and entry-point resources
+  requests/             Request and response records; keep private
+  lua_decrypted/        Original decrypted bytes
+  lua_readable/         Readable analysis copies
+  scripts/              Acquisition, decoding, transformation, verification
+  builds/<build-id>/    Separate directory for each build
+  logs/                 Installation and runtime logs
+  reports/              Findings and validation matrix
+  public/               Separately reviewed public documentation
 ```
 
-原始文件与分析副本分开。一次候选失败后写入新目录，不用递归删除整个工作区来解决签名输出冲突。
+Keep originals separate from analysis copies. After a failed candidate, use a new output directory rather than recursively deleting the workspace to resolve signing-output conflicts.
 
-## 2. 给 APK 建立分层地图
+## 2. Map the APK by layer
 
-优先检查：
+Inspect these areas first:
 
-1. Manifest：包名、启动 Activity、SDK、权限和进程。
-2. assets：入口配置、UI、脚本包、资源包和缓存名称。
-3. DEX：启动入口、下载器、缓存命中条件、Java/native 桥接。
-4. ELF：实际脚本加载器、解码器、签名判断和 VM 调用。
-5. 设备：安装的 APK、运行进程 ABI、已提取脚本和库的缓存行为。
+1. Manifest: package name, launcher Activity, SDK levels, permissions, and processes.
+2. Assets: entry configuration, UI, script packages, resource bundles, and cache names.
+3. DEX: startup entry, downloader, cache-hit conditions, and Java/native bridges.
+4. ELF: actual script loader, decoder, signature checks, and VM calls.
+5. Device: installed APK, running process ABI, and caching of extracted scripts and libraries.
 
-架构信息至少分开记录“设备支持 ABI”“APK 携带 ABI”“脚本进程实际 ABI”。设备支持 ARM64 不代表当前 Lua 引擎在执行 ARM64 库。
+Record the device-supported ABIs, APK-bundled ABIs, and actual script-process ABI separately. ARM64 support on the device does not establish that the Lua engine is running an ARM64 library.
 
-以调用链建立证据：
+Build evidence along the call path:
 
 ```text
-启动 Activity
-  -> 配置与环境初始化
-  -> 本地入口/缓存选择
-  -> 远端地址和脚本 ID
-  -> 请求与响应字段
-  -> 缓存文件
-  -> native 解码器/自定义 loadScript
-  -> Lua 模块加载
-  -> 验证/任务初始化/业务操作
+Launcher Activity
+  -> Configuration and environment initialization
+  -> Local entry point / cache selection
+  -> Remote address and script ID
+  -> Request and response fields
+  -> Cache file
+  -> Native decoder / custom loadScript
+  -> Lua module loading
+  -> Validation / task initialization / application behavior
 ```
 
-先追踪参数来源和返回值消费者，再深入单个函数。调用了名为 loadScript 的函数，并不能单独证明请求结果是源码；它也可能读取已缓存的模块。
+Trace argument sources and return-value consumers before examining individual functions in depth. A call to a function named loadScript does not establish that the response contains source code; it may load an already cached module.
 
-## 3. 回答“服务器下发脚本，还是计算结果”
+## 3. Determine whether the server delivers scripts or computed results
 
-这至少涉及两个不同问题：
+There are at least two separate questions:
 
-- **载荷类型**：源码、字节码、加密模块容器、配置，还是计算结果？
-- **调用时序**：载荷在登录前、登录后，还是从本地缓存加载？
+- **Payload type:** source, bytecode, encrypted module container, configuration, or computed result?
+- **Timing:** delivered before login, after login, or loaded from a local cache?
 
-判断依据：
+Use evidence to distinguish them:
 
-| 观察到的证据 | 支持的判断 | 仍需补充 |
+| Observed evidence | Supported interpretation | Additional evidence needed |
 |---|---|---|
-| 响应经解码后送入 Lua load/loadbuffer 或自定义模块注册 | 客户端接收了可执行内容 | 解码后的实际字节和运行入口 |
-| 响应仅被读取为任务状态、列表、数字或展示字段 | 该响应可能是数据/结果 | 是否还有第二次脚本请求 |
-| HTTP 200，但业务字段表示失败 | 请求到达服务器 | 不能说脚本获取成功 |
-| JSON 字符串里有高熵长文本 | 可能有编码或加密 | 不能仅凭高熵确认算法 |
-| 缓存扩展名为 .zip | 只是命名线索 | 魔数、解析器和实际结构 |
-| 下载请求不携带卡密，返回完整载荷 | 本次下载不以前置卡密为条件 | 不证明后续执行免验证 |
+| Decoded response reaches Lua load/loadbuffer or custom module registration | The client received executable content | Actual decoded bytes and execution entry point |
+| Response is consumed only as task status, lists, numbers, or display fields | This response may contain data or results | Whether a second script request exists |
+| HTTP 200 with an application-level failure field | The request reached the server | This does not establish successful script acquisition |
+| Long, high-entropy text in a JSON string | Encoding or encryption may be present | Entropy alone cannot identify the algorithm |
+| Cache filename ends in .zip | A naming clue only | Magic bytes, parser, and actual structure |
+| Complete payload returned without a license key in the download request | This download did not require a license key as a prerequisite | This does not establish validation-free execution |
 
-卡密输入框可能来自 APK，验证函数可能来自随后下载的模块。验证成功也可能只修改运行状态，并不触发脚本下发。
+The license-key input UI may come from the APK while the validation function comes from a subsequently downloaded module. Successful validation may only update runtime state without triggering a script download.
 
-**本案例的历史证据：**两次 read 响应的载荷可离线恢复出 Lua 模块；当时的下载请求没有卡密、登录令牌或设备标识，服务器返回成功。验证代码位于恢复的模块中。这支持“该次下载获得脚本内容，运行时另有验证逻辑”，不支持“所有版本和所有时刻都不需要下载鉴权”。
+**Historical evidence from this case:** payloads from two read responses could be recovered offline into Lua modules. Those download requests contained no license key, login token, or device identifier, and the server returned success. Validation code was present in the recovered modules. This supports the conclusion that these downloads delivered script content with separate runtime validation. It does not establish that download authorization is absent in every version or at every point in time.
 
-## 4. 复原请求，只访问已确认的范围
+## 4. Reconstruct requests within the confirmed scope
 
-在静态分析中找出：
+Establish the following through static analysis:
 
-- 主/备用地址如何选择，是否有健康检查。
-- GET、表单 POST、JSON POST 的实际区别。
-- action、脚本 ID、大小写、原字段拼写、User-Agent。
-- 签名、时间戳、会话令牌来自何处。
-- read、hash、version 等请求之间的顺序。
-- HTTP 状态与业务成功码的独立判断。
-- 重定向、超时、代理、压缩以及缓存策略。
+- How primary and fallback addresses are selected, including health checks.
+- Whether requests use GET, form POST, or JSON POST.
+- The action, script ID, capitalization, exact field spelling, and User-Agent.
+- Sources of signatures, timestamps, and session tokens.
+- Ordering of read, hash, version, and related requests.
+- Separate handling of HTTP status and application-level success codes.
+- Redirects, timeouts, proxies, compression, and caching policy.
 
-本例中有 getmd5/read 两种操作，请求是表单，而不是 JSON。字段名应按样本保留，包括拼写不规范的字段；不要在重放时“纠正”接口。
+This case used getmd5/read operations and form-encoded requests rather than JSON. Preserve field names exactly, including unconventional spellings; do not "correct" the interface when replaying a request.
 
-公开示意，仅说明结构：
+Public illustration of structure only:
 
 ```text
 POST https://scripts.example.invalid/<authorized-endpoint>
@@ -118,27 +117,27 @@ Content-Type: application/x-www-form-urlencoded
 action=read&id=<authorized-script-id>&<key-field>=<local-secret>
 ```
 
-保存每次请求的：
+Preserve the following for each request:
 
 ```text
-request.private.json      完整参数；私有
-request.redacted.json     可分享的脱敏描述
-response.body            客户端读取的完整正文
-response.parsed.json      可解析时的阅读副本
-result.json               状态、大小、哈希、时间、错误
+request.private.json     Complete parameters; private
+request.redacted.json    Shareable, redacted description
+response.body            Complete body read by the client
+response.parsed.json     Readable copy when parsing is possible
+result.json              Status, size, hashes, timestamp, and errors
 ```
 
-注意以下边界：
+Observe these boundaries:
 
-- response.body 是否经过 HTTP 客户端自动解压必须记录；客户端正文不是原始 TCP 字节。
-- 设置连接和读取超时及响应上限。超限或中断不能标记为完整捕获。
-- 不关闭 TLS 校验来隐藏证书错误；有代理时记录真实路径。
-- 不自动扩展脚本 ID 范围或向未知备用域名发送凭据。
-- 优先复用完整历史响应；文档整理无需再次请求业务服务器。
+- Record whether the HTTP client automatically decompressed response.body; a client-visible body is not raw TCP bytes.
+- Set connection and read timeouts and a response-size limit. A truncated or interrupted capture must not be marked complete.
+- Do not disable TLS verification to conceal certificate errors. Record the actual proxy path when applicable.
+- Do not automatically expand the script-ID scope or send credentials to unknown fallback domains.
+- Reuse complete historical responses where available; writing documentation does not require another request to the application server.
 
-## 5. 从响应提取文件，保持字节不变
+## 5. Extract the payload without changing its bytes
 
-若载荷位于 JSON 的 msg 字符串中：
+If the payload is a JSON msg string:
 
 ```python
 payload = response_json["msg"].encode("utf-8")
@@ -146,21 +145,21 @@ output_path.write_bytes(payload)
 assert output_path.read_bytes() == payload
 ```
 
-不要先格式化、去空白、改换行或把 JSON 引号一起写入容器。分开保存整个响应正文和 msg 的 UTF-8 字节。
+Do not format the payload, strip whitespace, normalize line endings, or include JSON quotation marks in the container. Preserve the full response body separately from the UTF-8 bytes extracted from msg.
 
-校验至少包括：
+At minimum, verify:
 
-1. HTTP 成功与业务成功条件。
-2. 载荷是否非空且符合预期结构。
-3. 落盘后重新读取的字节一致性。
-4. 本地 SHA-256。
-5. 若接口给出 MD5，比较它与相同载荷字节的 MD5。
+1. HTTP and application-level success conditions.
+2. A nonempty payload with the expected structure.
+3. Byte equality after writing and rereading the file.
+4. A locally computed SHA-256.
+5. If the interface returns an MD5, equality with the MD5 of the same payload bytes.
 
-MD5 一致只能证明与该服务器响应声明的值一致，不能替代身份认证或数字签名。
+Matching MD5 values establish consistency with the value declared in that server response. They do not replace authentication or a digital signature.
 
-## 6. 识别自定义容器，不要按后缀猜格式
+## 6. Recognize custom containers by structure
 
-本例两个缓存文件名以 .zip 结尾，实际是文本模块容器。逻辑结构如下：
+Both cache filenames in this case ended in .zip, but the files were text-based module containers. Their logical structure was:
 
 ```text
 <encrypted-module-name>:<declared-length>:<encrypted-module-body>
@@ -170,52 +169,52 @@ MD5 一致只能证明与该服务器响应声明的值一致，不能替代身�
 ...
 ```
 
-解析流程：
+Parsing workflow:
 
-1. 保留整个原始载荷的哈希。
-2. 按加载器确认的分隔符和编码解析。
-3. 验证长度究竟指字符数、十六进制字符数还是原始字节数。
-4. 只在当前格式已确认允许时忽略空分段。
-5. 解出模块名后检查重复项和路径。
-6. 校验模块数与解码后的总字节数。
+1. Preserve a hash of the entire original payload.
+2. Parse using the delimiters and encodings confirmed in the loader.
+3. Determine whether the length denotes characters, hexadecimal characters, or raw bytes.
+4. Ignore empty segments only when the confirmed format permits them.
+5. Check decoded module names for duplicate entries and unsafe paths.
+6. Verify the module count and total decoded byte count.
 
-本例声明长度对应密文的十六进制文本长度；直接当作解密后长度会得出错误结论。文本格式以十六进制承载加密字段，因此这些字段不会自然包含竖线分隔符；不要把这一条件推广到二进制格式。
+In this case, the declared length referred to the ciphertext's hexadecimal text length. Treating it as the decrypted length would produce an incorrect conclusion. The encrypted fields used hexadecimal text and therefore did not naturally contain the pipe delimiter. Do not generalize that property to binary formats.
 
-导出模块名是不可信路径：拒绝绝对路径、盘符、反斜杠替代路径、..、空名称和路径规范化后重复项，并确认最终路径仍位于输出根目录。
+Treat exported module names as untrusted paths. Reject absolute paths, drive prefixes, alternate paths using backslashes, .. components, empty names, and duplicates after normalization. Confirm that every resolved output path remains under the output root.
 
-## 7. 沿加载器确认每一层变换
+## 7. Confirm each transformation in the loader
 
-本例的数据链：
+The data flow in this case was:
 
 ```text
-模块名：
-  HEX -> RC4 -> UTF-8 模块名
+Module name:
+  HEX -> RC4 -> UTF-8 module name
 
-模块内容：
+Module content:
   HEX
     -> RC4
-    -> JNI Modified UTF-8 空字符还原
-    -> 与脚本 ID 字节循环 XOR
-    -> URL-safe Base64 解码
-    -> UTF-8 Lua 源码
+    -> JNI Modified UTF-8 null-character restoration
+    -> Repeating XOR with script-ID bytes
+    -> URL-safe Base64 decoding
+    -> UTF-8 Lua source
 ```
 
-这里的 RC4 参数来自样本加载器，循环 XOR 参数来自脚本 ID。它们不应因“长得像十六进制”就被替换成另一种字节表示。例如 ASCII 字符串密钥与对该字符串执行 fromhex 的结果不同。
+The RC4 parameters came from the sample's loader, and the repeating XOR parameter came from the script ID. Do not change their byte representations merely because they look hexadecimal. For example, an ASCII string key differs from the result of applying fromhex to that string.
 
-需要逐项确认：
+Verify each layer:
 
-| 层 | 核验点 |
+| Layer | Verification points |
 |---|---|
-| HEX | 字符集、偶数长度、大小写是否影响比较 |
-| RC4 | KSA/PRGA、输入密钥实际字节、每个模块是否重置状态 |
-| JNI 字符串 | C0 80 是否表示 U+0000、是否还有其他非标准 UTF-8 情况 |
-| XOR | ID 编码、索引起点、重复周期 |
-| Base64 | URL-safe 字母表、padding、是否允许无效字符 |
-| 源码 | 是 UTF-8 文本、Lua 字节码，还是还有下一层容器 |
+| HEX | Character set, even length, and whether letter case affects comparison |
+| RC4 | KSA/PRGA, actual key bytes, and whether state resets for each module |
+| JNI strings | Whether C0 80 represents U+0000 and whether other nonstandard UTF-8 cases occur |
+| XOR | ID encoding, starting index, and repetition period |
+| Base64 | URL-safe alphabet, padding, and handling of invalid characters |
+| Source | UTF-8 text, Lua bytecode, or another container layer |
 
-本例 RC4 输出中使用 C0 80 表示空字符。只有在确认其余内容属于后续 Base64-XOR 的 ASCII 范围后，才使用这种局部规范化。该替换不是通用 Modified UTF-8 解码器。
+The RC4 output in this case represented null characters as C0 80. This local normalization was used only after confirming that the remaining content stayed within the ASCII range produced by the subsequent Base64/XOR stages. This replacement is not a general Modified UTF-8 decoder.
 
-伪代码：
+Pseudocode:
 
 ```text
 for each validated segment:
@@ -229,302 +228,304 @@ for each validated segment:
     write_under_output_root(name, source)
 ```
 
-实际脚本应把 key_bytes 从私有输入传入，不把本案例的值硬编码到公共仓库。
+Pass key_bytes through private input in a real script. Do not hardcode this case's values into a public repository.
 
-## 8. 用逆向重编码验证解密
+## 8. Verify decryption through inverse encoding
 
-“能看到 Lua 关键字”不够。对每个模块执行：
+Recognizable Lua keywords are insufficient. For every module, perform:
 
 ```text
-源码
+Source
   -> URL-safe Base64
-  -> 循环 XOR
-  -> 恢复 JNI 空字符表示
+  -> Repeating XOR
+  -> Restore the JNI null-character representation
   -> RC4
   -> HEX
-  -> 与对应原始密文逐字节比较
+  -> Compare byte-for-byte with the corresponding original ciphertext
 ```
 
-同时验证规范化 Base64、模块路径、原始容器哈希和源文件哈希。若算法容许多种等价编码，应记录比较的是规范化值还是原始字节，不能把不同断言混写为“完全一致”。
+Also verify canonical Base64, module paths, the original container hash, and source-file hashes. If an algorithm permits equivalent encodings, state whether a comparison uses normalized values or original bytes. Do not report these different assertions interchangeably as "exact equality."
 
-本例 116 个模块完成精确逆向重编码。它证明外层恢复的字节一致性，不证明可读性变换或业务运行正确。
+All 116 modules in this case passed exact inverse encoding checks. This establishes byte consistency of the outer recovery process; it does not prove that readability transformations or application behavior are correct.
 
-常见失败：
+Common failures:
 
-| 表现 | 优先排查 |
+| Symptom | Check first |
 |---|---|
-| 模块名乱码 | RC4 密钥字节、HEX 解释、状态是否重置 |
-| 内容局部异常而名称正常 | XOR 参数、脚本 ID、JNI 空字符 |
-| Base64 非法字符 | 前一层错误；不要靠宽松解码吞掉错误 |
-| 解出一部分 Lua 后截断 | 响应采集、长度单位、文本写入换行 |
-| 明文可读但无法重编码一致 | padding、编码规范化或原始字节已被修改 |
+| Garbled module names | RC4 key bytes, HEX interpretation, and state resets |
+| Partially incorrect content with correct names | XOR parameters, script ID, and JNI null characters |
+| Invalid Base64 characters | Errors in the previous layer; do not hide them with permissive decoding |
+| Readable Lua followed by truncation | Response capture, length units, and line-ending changes during text output |
+| Readable plaintext that fails exact inverse encoding | Padding, encoding normalization, or modified original bytes |
 
-## 9. 源码可读化作为独立变换
+## 9. Keep readability transformations separate
 
-保留两套输出：
+Maintain two outputs:
 
-- lua_decrypted：忠于恢复出的原始字节。
-- lua_readable：字符串解码、局部结构整理和格式化。
+- lua_decrypted: faithful to the original recovered bytes.
+- lua_readable: decoded strings, locally simplified structure, and formatting.
 
-记录输入哈希、输出哈希、每类变换计数和未处理结构。
+Record input and output hashes, counts for each transformation, and structures left unchanged.
 
-### 9.1 字符串解码
+### 9.1 String decoding
 
-只处理参数为已确认常量的解码调用：
+Process only decoder calls whose arguments are confirmed constants:
 
-1. 提取纯计算解码逻辑和常量参数。
-2. 在受限的独立实现中复写算法。
-3. 对整数溢出、浮点计算、字节顺序及模运算做交叉校验。
-4. 仅替换已识别的调用表达式，不误改注释和字符串内容。
-5. 检查同一模块、同一 seed 的结果是否一致。
-6. 对无法解码的调用保留原文并报告。
+1. Extract the pure decoding logic and constant parameters.
+2. Reimplement the algorithm independently with constrained execution.
+3. Cross-check integer overflow, floating-point behavior, byte order, and modulo operations.
+4. Replace only identified call expressions, preserving comments and string contents.
+5. Verify that the same seed in the same module produces consistent results.
+6. Preserve and report calls that cannot be decoded.
 
-本例以 Python 实现和独立 Lua 算术实现逐次对照。执行的是复写的纯函数，不是下载模块的顶层代码。
+This case compared a Python implementation against an independent Lua arithmetic implementation for each call. Only reimplemented pure functions were executed, not the top-level code of downloaded modules.
 
-### 9.2 控制流平坦化
+### 9.2 Control-flow flattening
 
-只有能证明为有限、线性状态序列的调度器才转换。必须同时保留：
+Transform only dispatchers proven to follow a finite, linear state sequence. Preserve:
 
-- 分支局部变量的作用域；
-- 闭包捕获的绑定；
-- return/break 的作用范围；
-- 条件退出和副作用顺序。
+- Branch-local variable scope.
+- Bindings captured by closures.
+- The scope of return and break.
+- Conditional exits and side-effect ordering.
 
-必要时用 do ... end 保留原分支局部作用域。动态状态跳转、条件分岔或无法证明终止的循环原样保留。
+Use do ... end where necessary to retain branch-local scope. Leave dynamic state transitions, conditional branches, and loops without proven termination unchanged.
 
-不要用“从 function 到下一个 function”截取混淆函数：两者之间可能还包含外层调度器状态赋值、elseif 分支、局部初始化和解码辅助函数。本案例的中间尝试因此破坏过语法。应使用词法/语法块匹配，或对已确认的结构使用受断言保护的定位。
+Do not extract obfuscated functions by taking everything "from one function to the next function." That region may also contain outer dispatcher assignments, elseif branches, local initialization, and decoding helpers. An intermediate attempt in this case broke syntax for exactly this reason. Use lexical or syntactic block matching, or assertion-guarded locations for a confirmed structure.
 
-### 9.3 Unicode 方法名与运行时差异
+### 9.3 Unicode method names and runtime differences
 
-原样本中存在标准 Lua 5.3 不接受的中文方法标识。分析副本可做等价键名改写：
+The original sample contained Chinese method identifiers that standard Lua 5.3 did not accept. An analysis copy can use an equivalent string-key representation:
 
 ```lua
--- 示意：把扩展语法的方法声明改写为字符串键。
-Object["中文方法"] = function(self, value)
+-- Illustration: represent an extended-syntax method name as a string key.
+-- These escapes preserve the UTF-8 bytes of the example Unicode name.
+local method_name = "\xE4\xB8\xAD\xE6\x96\x87\xE6\x96\xB9\xE6\xB3\x95"
+Object[method_name] = function(self, value)
     return value
 end
-Object["中文方法"](Object, value)
+Object[method_name](Object, value)
 ```
 
-保留实际键名和 self 参数，并记录修改位置。不要修改原始解密副本来掩盖编译器差异。
+Preserve the actual key bytes and self parameter, and record the changed locations. Do not modify the original decrypted copy to conceal compiler differences.
 
-### 9.4 语法通过不等于执行成功
+### 9.4 Syntax success does not establish execution success
 
-可用编译但不调用的方式检查：
+Compile without calling the result:
 
 ```lua
 local chunk, message = load(source, module_name, "t", {})
 assert(chunk, message)
--- 此处不调用 chunk。
+-- Do not call chunk here.
 ```
 
-空环境表不是执行不可信 Lua 的充分沙箱。上述约束依赖于不调用编译得到的函数；编译本身仍应有资源限制。业务测试放到单独授权的隔离环境。
+An empty environment table is not a sufficient sandbox for executing untrusted Lua. The constraint above depends on never calling the compiled function; compilation should also have resource limits. Run application tests only in a separately authorized, isolated environment.
 
-## 10. 找到卡密逻辑与业务依赖的边界
+## 10. Separate license validation from application dependencies
 
-按主入口到调用点分类，不按字符串关键词批量删除：
+Classify behavior along the path from the main entry point to each call site. Do not delete code in bulk based on string keywords:
 
-| 类别 | 示例 | 检查重点 |
+| Category | Examples | Main question |
 |---|---|---|
-| 下载状态 | 包 hash、脚本 ID、版本更新 | 决定加载哪份字节 |
-| 授权状态 | 卡密登录、有效期、heartbeat | 是否独立于下载 |
-| 启动状态 | 广告阶段、证书状态、初始化完成 | 是否被引擎执行门槛复用 |
-| 会话状态 | client/socket、设备信息 | 是否为后续请求必需 |
-| 功能依赖 | 游戏进程、内存地址、插件 | 无法靠移除提示补齐 |
-| 通信兼容 | ping、version、UDP/TCP/UDS | 检测是否对应实际协议能力 |
+| Download state | Package hash, script ID, version updates | Which bytes are loaded? |
+| Authorization state | License-key login, expiry, heartbeat | Is this independent of downloading? |
+| Startup state | Advertisement stage, certificate state, initialization completion | Does the engine reuse this state as an execution prerequisite? |
+| Session state | Client/socket objects, device information | Is this required for later requests? |
+| Functional dependencies | Game processes, memory addresses, plugins | What cannot be supplied merely by removing a prompt? |
+| Communication compatibility | ping, version, UDP/TCP/UDS | Does the check represent an actual protocol capability? |
 
-本例可以从 Main、LoadModule、Init、验证服务封装和验证 UI 建立调用图。模块被删除后，仍需检查初始化、退出回调、心跳、账户 UI 和全局变量引用是否残留。
+In this case, a call graph could be built from Main, LoadModule, Init, the validation-service wrapper, and the validation UI. After a module is removed, inspect initialization, exit callbacks, heartbeats, account UI, and global-variable references for remaining dependencies.
 
-“没有卡密输入”与“没有联网”是两件事。业务地址探测、插件下载、可选通知以及本地通信可能继续存在。
+Absence of a license-key prompt does not establish absence of network activity. Endpoint discovery, plugin downloads, optional notifications, and local communication may remain.
 
-## 11. 用最小脚本隔离“启动就结束”
+## 11. Isolate immediate exit with a minimal script
 
-异常分层：
+Separate failure stages:
 
 ```text
-安装失败
-  -> 应用入口失败
-  -> 引擎未启动
-  -> 缓存/入口错误
-  -> 脚本未被允许执行
-  -> 解码/编译失败
-  -> 模块初始化失败
-  -> 业务依赖失败
+Installation failure
+  -> Application entry failure
+  -> Engine not started
+  -> Incorrect cache / entry point
+  -> Script execution not permitted
+  -> Decoding / compilation failure
+  -> Module initialization failure
+  -> Application dependency failure
 ```
 
-在专门诊断构建中使用可观察的最小脚本：
+Use an observable minimal script in a dedicated diagnostic build:
 
 ```lua
-toast("诊断入口已执行")
+toast("Diagnostic entry point executed")
 sleep(2500)
 ```
 
-核对入口日志和退出时间差，不能只看 print：本案例标准输出被重定向，print 缺失并不能证明没执行。时间差也应结合入口证据，排除加载或网络等待。
+Check entry logs and elapsed time before exit, rather than relying solely on print. Standard output was redirected in this case, so missing print output did not establish that execution never occurred. Combine timing with entry evidence to distinguish script execution from loading or network waits.
 
-本案例最小脚本补齐启动状态后运行约 2.59 秒，而此前在执行前被跳过。完整脚本随后能显示首次说明界面。这两项证据分别证明“执行入口打开”和“走到相应初始化阶段”，不能证明后面的游戏任务正常。
+After the required startup state was restored, the minimal script ran for approximately 2.59 seconds; previously it had been skipped before execution. The full script subsequently displayed its first-use information screen. These observations establish that the execution entry became reachable and that initialization reached that screen, respectively. They do not establish that later game tasks worked.
 
-### 11.1 广告流程可能承担初始化
+### 11.1 Advertisement flow may also initialize state
 
-本例开屏流程同时初始化了 Java 状态表。直接跳到下一 Activity 漏掉状态，引擎在 Lua 调用前检查失败，随后以退出码 0 结束。
+The splash flow in this case also initialized a Java state table. Jumping directly to the next Activity omitted that state. The engine's pre-Lua check failed, and the process then exited with code 0.
 
-因此：
+Consequently:
 
-- 退出码 0 不代表 Lua 运行过。
-- 删除 UI 路径前要审计它的状态写入。
-- 修复应保留必要初始化；不要把整个执行检查永久改为 true。
-- 确认状态来自哪个进程、对象和生命周期。
+- Exit code 0 does not establish that Lua ran.
+- Audit state writes before removing a UI path.
+- Preserve required initialization in the fix; do not permanently replace the entire execution check with true.
+- Identify the process, object, and lifecycle that own the state.
 
-### 11.2 重签名可能改变内部比较
+### 11.2 Re-signing can affect internal comparisons
 
-APK 安装签名验证、Java 内部证书摘要比较、native 内部身份检查属于不同层。重签名后能安装，不代表应用自身接受该签名。
+APK installation signature verification, Java certificate-digest comparisons, and native identity checks are separate layers. Successful installation after re-signing does not establish that the application accepts its new signature internally.
 
-做授权的本地重签名兼容时，核对实际签名证书和内部预期值的来源，保留局部变更记录。不要把删除所有签名判断作为默认方法，更不能声称拥有原厂签名身份。
+For authorized local re-signing compatibility work, verify the actual signing certificate and the source of internal expected values, and record localized changes. Removing every signature check should not be the default approach, and a re-signed package must not be represented as having the original publisher's signing identity.
 
-### 11.3 覆盖安装可能保留旧脚本与库
+### 11.3 Replacement installation can retain old scripts and libraries
 
-若应用根据 flag 文件或缓存命中跳过解包，install -r 后实际执行的仍可能是旧库或旧脚本。
+If flag files or cache hits cause the application to skip extraction, install -r may leave old scripts or libraries in use.
 
-逐层核对：
+Verify each layer:
 
 ```text
-准备交付 APK 的 SHA-256
-  -> 设备上已安装 APK 的 SHA-256
-  -> 解包后的脚本版本
-  -> 实际进程加载的库/ABI
-  -> 入口日志和阶段结果
+SHA-256 of the APK intended for delivery
+  -> SHA-256 of the APK installed on the device
+  -> Version of the extracted scripts
+  -> Libraries / ABI actually loaded by the process
+  -> Entry logs and stage results
 ```
 
-只通过允许的接口读取；权限不足应明确记录，不擅自提权。不要清空整个应用数据来代替缓存定位。
+Read through authorized interfaces only. Record insufficient permissions explicitly rather than escalating privileges without authorization. Locate the relevant cache instead of clearing all application data.
 
-## 12. 从本次失败提炼排错规则
+## 12. Derive troubleshooting rules from observed failures
 
-### 12.1 应用元数据为空
+### 12.1 Missing application metadata
 
-原候选函数在未找到社区时返回“未检测到社区”字符串。调用方把它当作包名查询，得到 nil 后访问 .app，从而崩溃。
+The original candidate-discovery function returned a message meaning "community app not detected" when discovery failed. Its caller treated that message as a package name, received nil from the metadata query, and crashed while accessing .app.
 
-修复原则：
+Correction principles:
 
-- 用空列表表示没有候选，提示文字只用于展示。
-- 真实包名查不到名称时可退回包名显示。
-- 选择项与包名数组保持相同顺序。
-- 空候选应停止任务创建，不把 nil 继续向下传递。
+- Represent no candidates as an empty list; reserve explanatory text for display.
+- Fall back to displaying the real package name if its application label is unavailable.
+- Keep selection entries and package-name arrays in the same order.
+- Stop task creation on an empty candidate set instead of passing nil downstream.
 
-### 12.2 多开实例编号为空
+### 12.2 Missing multi-instance number
 
-多开从包名提取编号，再计算端口。扩大列表到所有应用后，未包含数字的包名产生 nil，随后“端口基数 + 编号”报错。
+The multi-instance mode extracted a number from the package name and used it to calculate a port. Broadening discovery to all applications introduced package names without digits. Extraction returned nil, and the subsequent "base port + instance number" calculation failed.
 
-不能把空编号强行变成 1，也不能把列表序号当作实例编号：那可能连接到错误实例。
+Do not replace a missing number with 1 or use the list position as the instance number: either approach may connect to the wrong instance.
 
-需要保留或重建明确的“应用 -> 实例编号 -> 通信端点”映射，并在创建任务前检查。只含数字也不等于映射正确，端点还需与目标实现一致。
+Preserve or reconstruct an explicit "application -> instance number -> communication endpoint" mapping, and validate it before creating a task. The mere presence of digits does not prove the mapping is correct; the endpoint must also match the target implementation.
 
-本案例最终保留了多开原有编号包发现和端口映射；单开可单独改成显式应用选择。此前过度扩大多开列表的中间包不能作为交付包。
+The final candidate in this case retained the original numbered-package discovery and port mapping for multi-instance mode. Single-instance mode could independently use explicit application selection. The intermediate build that broadened multi-instance discovery too far was unsuitable for delivery.
 
-### 12.3 检测取消不等于依赖取消
+### 12.3 Removing a check does not remove its dependency
 
-身份/版本握手被移除后，实际任务仍可能需要：
+After an identity or version handshake is removed, actual tasks may still require:
 
-- 对方实现的本地 socket 命令；
-- 固定的内存结构；
-- 插件提供的功能；
-- 正确的游戏界面和版本。
+- Local socket commands implemented by the other endpoint.
+- Specific memory layouts.
+- Plugin-provided features.
+- The expected game interface and version.
 
-应明确写“移除了哪处拦截”，不能写成“兼容所有社区”。
+State exactly which blocking check was removed. Do not describe this as compatibility with every community app.
 
-### 12.4 旧目标 SDK 导致安装失败
+### 12.4 Installation failure caused by an old target SDK
 
-本案例另一个旧 APK 通过 ZIP、对齐和签名校验，但设备返回：
+Another legacy APK in this case passed ZIP, alignment, and signature checks, but the device returned:
 
 ```text
 INSTALL_FAILED_DEPRECATED_SDK_VERSION:
 App package must target at least SDK version 19, but found 15
 ```
 
-这是当时该模拟器的实测阈值，不应推广为所有 Android 14 的统一阈值。记录完整设备输出，区分 SDK、ABI、签名冲突和包损坏。
+This was the threshold observed on that emulator at the time, not a universal threshold for all Android 14 systems. Preserve the complete device output and distinguish SDK restrictions from ABI incompatibility, signature conflicts, and package corruption.
 
-该包在明确的模拟器上使用低目标 SDK 兼容安装参数后成功，原字节未变。安装成功仍不能证明插件或业务运行兼容。
+The unchanged APK installed successfully on the identified emulator using a compatibility installation option for low target SDKs. Installation success still did not establish plugin or application compatibility.
 
-## 13. 分级验收，不把局部成功叫作“最终正常”
+## 13. Validate by stage and report the actual scope
 
-| 等级 | 证据 |
+| Level | Required evidence |
 |---|---|
-| L0 原始输入 | 原包/原始响应哈希、大小、来源 |
-| L1 格式与恢复 | 容器解析、所有模块逆向重编码 |
-| L2 可读性变换 | 语法检查、纯函数样例、未变换项记录 |
-| L3 打包 | 修改清单、DEX 校验、ZIP 完整性、对齐、签名 |
-| L4 安装与身份 | 明确设备、安装返回、已安装 APK 哈希 |
-| L5 入口执行 | 最小脚本/完整入口的运行证据 |
-| L6 初始化 | UI、模块加载、目标选择、配置和依赖 |
-| L7 实际业务 | 在授权环境中完成具体任务并检查结果 |
+| L0 Original inputs | Hashes, sizes, and provenance of original packages and responses |
+| L1 Format and recovery | Container parsing and inverse encoding checks for every module |
+| L2 Readability transformations | Syntax checks, pure-function fixtures, and unchanged-structure records |
+| L3 Packaging | Change manifest, DEX checks, ZIP integrity, alignment, and signatures |
+| L4 Installation and identity | Identified device, installation result, and installed APK hash |
+| L5 Entry execution | Runtime evidence from the minimal script or full entry point |
+| L6 Initialization | UI, module loading, target selection, configuration, and dependencies |
+| L7 Application behavior | A specific task completed and its result checked in an authorized environment |
 
-交付时写出最高已完成等级和未测场景。单个首次说明弹窗最多证明走到那个阶段；非 ROOT、ROOT、不同 ABI 和不同模式不能互相替代。
+Report the highest completed level and untested scenarios. A first-use dialog proves only that execution reached that stage. Results from non-root and root environments, different ABIs, and different modes are not interchangeable.
 
-设备断开时：
+When a device disconnects:
 
-1. 停止设备相关操作，不改用另一台已连接手机。
-2. 完成本地可做的验证。
-3. 标记最终包未安装或未运行。
-4. 说明设备最后留下的是哪一版。
-5. 重新连接后先核对已安装哈希，再复现问题。
+1. Stop device-dependent operations; do not switch to another connected phone.
+2. Complete checks that can run locally.
+3. Mark the final package as not installed or not run, as applicable.
+4. State which build was last left on the device.
+5. After reconnection, verify the installed hash before reproducing the issue.
 
-本案例曾在模拟器中留下中间包；其哈希与最终交付包不同，解释了后续仍出现旧多开错误。版本核验是排错步骤，不应只依赖图标或 versionName。
+An intermediate package was left on the emulator during this case. Its hash differed from the final delivery package, explaining why the old multi-instance error persisted. Version verification belongs in the troubleshooting process; icons and versionName alone are insufficient.
 
-## 14. 历史结果与证据边界
+## 14. Historical results and evidence limits
 
-以下数字来自本案例保存的下载、解密和变换清单，适用于该次快照；不表示服务器当前状态：
+These figures come from the saved download, decryption, and transformation manifests for this case. They describe that snapshot, not the server's current state:
 
-| 指标 | 结果 |
+| Metric | Result |
 |---|---:|
-| 两份缓存容器大小 | 2,782,106 / 2,668,562 字节 |
-| 原始恢复模块数 | 单开 57，多开 59，共 116 |
-| 原始恢复源码大小 | 1,031,632 / 988,105 字节 |
-| 模块逆向重编码 | 116 个通过 |
-| 可读版字符串调用替换 | 22,374 处 |
-| 已证明线性并整理的调度器 | 398 处 |
-| 保留的调度结构 | 15 个文件内 28 处 |
-| Unicode 方法语法兼容改写 | 4 处 |
-| 可读版 Lua 5.3 语法检查 | 116 个通过 |
+| Sizes of the two cache containers | 2,782,106 / 2,668,562 bytes |
+| Originally recovered modules | 57 single-instance, 59 multi-instance; 116 total |
+| Originally recovered source sizes | 1,031,632 / 988,105 bytes |
+| Exact inverse encoding checks | 116 modules passed |
+| String-decoder calls replaced in readable copies | 22,374 |
+| Proven linear dispatchers simplified | 398 |
+| Dispatcher structures retained | 28 across 15 files |
+| Unicode method syntax compatibility rewrites | 4 |
+| Lua 5.3 syntax checks on readable modules | 116 passed |
 
-后续本地构建省略了每种模式各 2 个验证模块，得到 55 + 57 = 112 个内嵌模块。不要把 112 当作最初下载或解密的模块数。
+Later local builds omitted two validation modules per mode, leaving 55 + 57 = 112 embedded modules. Do not report 112 as the number originally downloaded or decrypted.
 
-时间记录优先保存 UTC，并标注设备、主机和报告时区。模拟器显示时间不是报告生成时间。
+Prefer UTC for recorded timestamps and identify device, host, and report time zones. An emulator's displayed time is not the report-generation time.
 
-私有证据索引：
+Private evidence index:
 
-| 阶段 | 本地文件类型 |
+| Stage | Local file types |
 |---|---|
-| 下载 | request_manifest.json、download_summary.json、response.body |
-| 解密 | lua_decrypted/manifest.json |
-| 可读化 | lua_readable/manifest.json、decoded_strings.json |
-| 复核 | lua_verification.json |
-| 构建 | build_report.json / build_manifest.json、签名验证日志 |
-| 设备 | 安装输出、已安装 APK 哈希、logcat、阶段截图 |
+| Download | request_manifest.json, download_summary.json, response.body |
+| Decryption | lua_decrypted/manifest.json |
+| Readability | lua_readable/manifest.json, decoded_strings.json |
+| Verification | lua_verification.json |
+| Build | build_report.json / build_manifest.json, signature verification logs |
+| Device | Installation output, installed APK hash, logcat, stage screenshots |
 
-这些原始证据没有随本文公开；因此本文是方法与结果摘要，独立复现仍需自己的授权样本和私有参数。
+The original evidence is not published with this guide. This document summarizes the method and results; independent reproduction requires an authorized sample and the relevant private parameters.
 
-## 15. 发布与交付检查
+## 15. Publication and delivery checks
 
-发布前只选择审查过的文件，不把整个 work/ 目录加入 Git。
+Select only reviewed files for publication. Do not add the entire work/ directory to Git.
 
-检查清单：
+Checklist:
 
-- [ ] 真实请求地址、密钥、卡密、cookie、token、设备标识已移除。
-- [ ] 不包含 keystore、签名密码、完整流量、解密业务源码或带个人信息的截图。
-- [ ] 示例域名和密钥明确为占位值。
-- [ ] 原始源码与可读化副本的角色明确。
-- [ ] 每个结论能对应到证据类型，历史结果不写成当前服务器保证。
-- [ ] 签名、格式、运行、功能验证分开报告。
-- [ ] README 链接正确，代码块完整，文件编码为 UTF-8。
-- [ ] 提交只包含本次指南及必要索引变更。
-- [ ] 推送后核对远端分支、提交和文档内容。
-- [ ] 保留本地私有证据，记录临时状态清理情况。
+- [ ] Live request addresses, secrets, license keys, cookies, tokens, and device identifiers have been removed.
+- [ ] No keystores, signing passwords, full traffic captures, decrypted application source, or screenshots containing personal information are included.
+- [ ] Example domains and keys are clearly placeholders.
+- [ ] Original source and readability copies have clearly defined roles.
+- [ ] Each conclusion maps to an evidence type; historical results are not presented as guarantees about the current server.
+- [ ] Signature, format, runtime, and functional validation are reported separately.
+- [ ] README links resolve, code fences are complete, and files use UTF-8.
+- [ ] The commit contains only this guide and necessary index changes.
+- [ ] The remote branch, commit, and document content are verified after pushing.
+- [ ] Private local evidence is retained, and cleanup of temporary state is recorded.
 
-推荐最终交付描述：
+Suggested delivery summary:
 
 ```text
-本次完成：<已获取/已恢复/已整理/已验证到哪个阶段>
-输入快照：<哈希和来源记录>
-公开产物：<文档和提交>
-未公开内容：<密钥、原始载荷、业务源码等>
-验证边界：<模式、ABI、设备及未测依赖>
-当前设备版本：<已核对哈希或明确未安装>
+Completed: <acquired / recovered / made readable / verified through stage>
+Input snapshot: <hashes and provenance records>
+Public artifacts: <document and commit>
+Private material: <keys, original payloads, application source, etc.>
+Validation scope: <modes, ABIs, devices, and untested dependencies>
+Current device build: <verified hash or explicit statement that it is not installed>
 ```
